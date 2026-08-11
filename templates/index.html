@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FixMyTube — Advanced Media Transformer</title>
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+
+<header class="topbar">
+    <div class="brand">
+        <div class="brand-icon">↓</div>
+        <div>
+            <div class="brand-name">FixMyTube</div>
+            <div class="brand-sub">MEDIA TRANSFORMER</div>
+        </div>
+    </div>
+
+    <button class="menu-btn" type="button">☰</button>
+</header>
+
+
+<main class="container">
+
+    <section class="hero">
+
+        <div class="badge">
+            ⚡ POWERED BY FFMPEG
+        </div>
+
+        <h1>
+            Download, Transform
+            <span>&amp; Save</span>
+        </h1>
+
+        <p>
+            Transform your videos with powerful media tools.
+            Mirror, crop, change FPS, modify audio and remove metadata.
+        </p>
+
+    </section>
+
+
+    <!-- Upload -->
+
+    <section class="card upload-card">
+
+        <div class="section-title">
+            <span>🎬</span>
+            <div>
+                <h2>Upload Your Video</h2>
+                <p>Choose a video from your device</p>
+            </div>
+        </div>
+
+        <label class="upload-box" for="videoInput">
+
+            <div class="upload-icon">
+                ↑
+            </div>
+
+            <strong>Choose Video</strong>
+
+            <span>
+                MP4, MOV, MKV, AVI and more
+            </span>
+
+            <small>
+                Maximum target: 2 GB
+            </small>
+
+        </label>
+
+        <input
+            id="videoInput"
+            type="file"
+            accept="video/*"
+            hidden
+        >
+
+        <div id="fileInfo" class="file-info hidden"></div>
+
+    </section>
+
+
+    <!-- Transform modes -->
+
+    <section class="card">
+
+        <div class="section-title">
+            <span>✨</span>
+            <div>
+                <h2>Transformation Mode</h2>
+                <p>Choose how you want to process your video</p>
+            </div>
+        </div>
+
+
+        <div class="mode-grid">
+
+            <button
+                class="mode-card active"
+                data-mode="basic"
+                type="button"
+            >
+                <div class="mode-icon">⚡</div>
+
+                <strong>Fast Transform</strong>
+
+                <span>
+                    Quick basic transformation
+                </span>
+            </button>
+
+
+            <button
+                class="mode-card"
+                data-mode="heavy"
+                type="button"
+            >
+                <div class="mode-icon">🔥</div>
+
+                <strong>Heavy Transform</strong>
+
+                <span>
+                    Advanced transformation
+                </span>
+            </button>
+
+        </div>
+
+    </section>
+
+
+    <!-- Tools -->
+
+    <section class="card">
+
+        <div class="section-title">
+            <span>🛠️</span>
+            <div>
+                <h2>Transform Tools</h2>
+                <p>Customize your video</p>
+            </div>
+        </div>
+
+
+        <div class="tool-row">
+
+            <div>
+                <strong>🪞 Mirror / Flip</strong>
+                <span>Flip video horizontally</span>
+            </div>
+
+            <label class="switch">
+                <input id="mirror" type="checkbox" checked>
+                <span></span>
+            </label>
+
+        </div>
+
+
+        <div class="tool-row">
+
+            <div>
+                <strong>✂️ Deep Pixel Crop</strong>
+                <span>Crop and zoom the frame</span>
+            </div>
+
+            <label class="switch">
+                <input id="crop" type="checkbox" checked>
+                <span></span>
+            </label>
+
+        </div>
+
+
+        <div class="tool-row">
+
+            <div>
+                <strong>🧹 Remove Metadata</strong>
+                <span>Remove embedded metadata</span>
+            </div>
+
+            <label class="switch">
+                <input id="metadata" type="checkbox" checked>
+                <span></span>
+            </label>
+
+        </div>
+
+
+        <div class="select-row">
+
+            <label for="fps">
+                🎞️ FPS
+            </label>
+
+            <select id="fps">
+                <option value="source">Original</option>
+                <option value="24">24 FPS</option>
+                <option value="30" selected>30 FPS</option>
+                <option value="60">60 FPS</option>
+            </select>
+
+        </div>
+
+
+        <div class="select-row">
+
+            <label for="resolution">
+                📐 Resolution
+            </label>
+
+            <select id="resolution">
+                <option value="source">Original</option>
+                <option value="1080">1080p</option>
+                <option value="720">720p</option>
+                <option value="480">480p</option>
+                <option value="360">360p</option>
+            </select>
+
+        </div>
+
+
+        <div class="range-row">
+
+            <div class="range-head">
+                <label for="pitch">
+                    🔊 Audio Pitch
+                </label>
+
+                <output id="pitchValue">
+                    1.00x
+                </output>
+            </div>
+
+            <input
+                id="pitch"
+                type="range"
+                min="0.95"
+                max="1.10"
+                step="0.01"
+                value="1"
+            >
+
+        </div>
+
+
+        <div class="range-row">
+
+            <div class="range-head">
+                <label for="tempo">
+                    ⏩ Audio Tempo
+                </label>
+
+                <output id="tempoValue">
+                    1.00x
+                </output>
+            </div>
+
+            <input
+                id="tempo"
+                type="range"
+                min="0.90"
+                max="1.10"
+                step="0.01"
+                value="1"
+            >
+
+        </div>
+
+    </section>
+
+
+    <!-- Process -->
+
+    <section class="process-section">
+
+        <button
+            id="processBtn"
+            class="process-btn"
+            type="button"
+        >
+            <span>✨</span>
+            PROCESS VIDEO
+        </button>
+
+        <div
+            id="progressCard"
+            class="progress-card hidden"
+        >
+
+            <div class="progress-head">
+                <strong id="progressText">
+                    Preparing...
+                </strong>
+
+                <span id="progressPercent">
+                    0%
+                </span>
+            </div>
+
+            <div class="progress-bar">
+                <div
+                    id="progressFill"
+                    class="progress-fill"
+                ></div>
+            </div>
+
+            <p id="statusText">
+                Uploading video...
+            </p>
+
+        </div>
+
+        <a
+            id="downloadBtn"
+            class="download-btn hidden"
+            href="#"
+        >
+            📥 DOWNLOAD PROCESSED VIDEO
+        </a>
+
+    </section>
+
+
+    <footer>
+        <p>FixMyTube • Advanced Media Transformer</p>
+        <span>Powered by FFmpeg</span>
+    </footer>
+
+</main>
+
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+
+</body>
+</html>
