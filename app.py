@@ -1,15 +1,10 @@
 import os
 import uuid
-import threading
 import subprocess
+import threading
+import time
 
-from flask import (
-    Flask,
-    request,
-    jsonify,
-    send_file,
-    render_template
-)
+from flask import Flask, request, jsonify, send_file, render_template
 
 app = Flask(__name__)
 
@@ -21,7 +16,10 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Target: 2 GB
+# ==========================================
+# 2 GB MAX FILE
+# ==========================================
+
 MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
 
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE
@@ -33,78 +31,23 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE
 
 jobs = {}
 
-
-# ==========================================
-# HOME
-# ==========================================
-
-@app.route("/")
-def home():
-    return render_template("index.html")
+jobs_lock = threading.Lock()
 
 
 # ==========================================
-# HEALTH
+# HELPERS
 # ==========================================
 
-@app.route("/health")
-def health():
-
-    return jsonify({
-        "status": "ok",
-        "service": "FixMyTube"
-    })
-
-
-# ==========================================
-# 2 GB ERROR
-# ==========================================
-
-@app.errorhandler(413)
-def too_large(error):
-
-    return jsonify({
-        "error": "Video 2 GB se badi hai."
-    }), 413
-
-
-# ==========================================
-# SAFE FLOAT
-# ==========================================
-
-def safe_float(
-    value,
-    default,
-    minimum,
-    maximum
-):
-
+def safe_float(value, default, minimum, maximum):
     try:
-
         value = float(value)
-
-        return max(
-            minimum,
-            min(maximum, value)
-        )
-
-    except:
-
+        return max(minimum, min(maximum, value))
+    except (TypeError, ValueError):
         return default
 
 
-# ==========================================
-# SAFE INT
-# ==========================================
-
-def safe_int(
-    value,
-    default,
-    allowed
-):
-
+def safe_int(value, default, allowed):
     try:
-
         value = int(value)
 
         if value in allowed:
@@ -112,9 +55,16 @@ def safe_int(
 
         return default
 
-    except:
-
+    except (TypeError, ValueError):
         return default
+
+
+def update_job(job_id, **data):
+
+    with jobs_lock:
+
+        if job_id in jobs:
+            jobs[job_id].update(data)
 
 
 # ==========================================
@@ -131,10 +81,7 @@ def build_video_filter(
 
     # Mirror
     if mirror:
-
-        filters.append(
-            "hflip"
-        )
+        filters.append("hflip")
 
     # Deep pixel crop
     if crop:
@@ -166,11 +113,10 @@ def build_video_filter(
             resolution_map[resolution]
         )
 
-    if not filters:
+    if filters:
+        return ",".join(filters)
 
-        return None
-
-    return ",".join(filters)
+    return "null"
 
 
 # ==========================================
@@ -199,15 +145,14 @@ def build_audio_filter(
             f"atempo={tempo:.4f}"
         )
 
-    if not filters:
+    if filters:
+        return ",".join(filters)
 
-        return None
-
-    return ",".join(filters)
+    return "anull"
 
 
 # ==========================================
-# BACKGROUND PROCESS
+# FFMPEG WORKER
 # ==========================================
 
 def process_job(
@@ -219,19 +164,27 @@ def process_job(
 
     try:
 
-        jobs[job_id]["status"] = "processing"
-        jobs[job_id]["progress"] = 5
+        update_job(
+            job_id,
+            status="processing",
+            progress=10,
+            message="FFmpeg processing started..."
+        )
 
         mode = settings["mode"]
 
         mirror = settings["mirror"]
+
         crop = settings["crop"]
-        metadata = settings["metadata"]
+
+        remove_metadata = settings["metadata"]
 
         fps_value = settings["fps"]
+
         resolution = settings["resolution"]
 
         pitch = settings["pitch"]
+
         tempo = settings["tempo"]
 
 
@@ -242,6 +195,7 @@ def process_job(
         if mode == "heavy":
 
             mirror = True
+
             crop = True
 
             if abs(pitch - 1.0) < 0.001:
@@ -274,14 +228,18 @@ def process_job(
         # ==================================
 
         command = [
+
             "ffmpeg",
+
             "-y",
+
             "-i",
             input_file
         ]
 
 
         # Video filter
+
         if video_filter:
 
             command.extend([
@@ -291,6 +249,7 @@ def process_job(
 
 
         # FPS
+
         if fps_value != "source":
 
             fps = safe_int(
@@ -305,7 +264,8 @@ def process_job(
             ])
 
 
-        # Audio
+        # Audio filter
+
         if audio_filter:
 
             command.extend([
@@ -314,8 +274,9 @@ def process_job(
             ])
 
 
-        # Metadata removal
-        if metadata:
+        # Metadata
+
+        if remove_metadata:
 
             command.extend([
                 "-map_metadata",
@@ -324,7 +285,7 @@ def process_job(
 
 
         # ==================================
-        # ENCODER
+        # ENCODING
         # ==================================
 
         if mode == "heavy":
@@ -356,101 +317,249 @@ def process_job(
             "-movflags",
             "+faststart",
 
+            "-progress",
+            "pipe:1",
+
+            "-nostats",
+
             output_file
         ])
 
 
-        jobs[job_id]["progress"] = 10
-
-
         # ==================================
-        # START FFMPEG
+        # RUN FFMPEG
         # ==================================
 
         process = subprocess.Popen(
+
             command,
-            stdout=subprocess.DEVNULL,
+
+            stdout=subprocess.PIPE,
+
             stderr=subprocess.PIPE,
+
             text=True,
+
             bufsize=1
         )
 
 
+        duration = None
+
+
         # ==================================
-        # READ FFMPEG LOG
+        # READ PROGRESS
         # ==================================
 
-        for line in process.stderr:
+        while True:
+
+            line = process.stdout.readline()
+
+            if not line:
+
+                if process.poll() is not None:
+                    break
+
+                time.sleep(0.05)
+
+                continue
+
 
             line = line.strip()
 
-            if "frame=" in line:
 
-                # Processing is active.
-                # Exact duration requires ffprobe,
-                # so keep UI progress moving.
+            # Duration
+            if line.startswith(
+                "out_time_ms="
+            ):
 
-                current = jobs[job_id].get(
-                    "progress",
-                    10
-                )
+                try:
 
-                if current < 95:
-
-                    jobs[job_id]["progress"] = (
-                        current + 1
+                    out_time_ms = int(
+                        line.split(
+                            "=",
+                            1
+                        )[1]
                     )
 
+                    if duration:
+
+                        current_seconds = (
+                            out_time_ms / 1000000
+                        )
+
+                        percent = (
+                            current_seconds /
+                            duration
+                        ) * 100
+
+                        percent = max(
+                            10,
+                            min(
+                                99,
+                                percent
+                            )
+                        )
+
+                        update_job(
+
+                            job_id,
+
+                            progress=round(
+                                percent,
+                                1
+                            ),
+
+                            message=
+                                "FFmpeg video process kar raha hai..."
+                        )
+
+                except Exception:
+                    pass
+
+
+            # End
+            if line == "progress=end":
+                break
+
+
+        # ==================================
+        # WAIT
+        # ==================================
 
         return_code = process.wait()
 
 
         # ==================================
-        # FAILED
+        # READ ERROR
+        # ==================================
+
+        stderr_output = ""
+
+        try:
+
+            stderr_output = (
+                process.stderr.read()
+            )
+
+        except Exception:
+            pass
+
+
+        # ==================================
+        # ERROR
         # ==================================
 
         if return_code != 0:
 
-            jobs[job_id]["status"] = "error"
+            update_job(
 
-            jobs[job_id]["error"] = (
-                "FFmpeg video processing failed."
+                job_id,
+
+                status="error",
+
+                progress=0,
+
+                error=
+                    "FFmpeg processing failed."
+            )
+
+            print(
+                "FFmpeg ERROR:",
+                stderr_output[-5000:]
             )
 
             return
 
 
         # ==================================
-        # SUCCESS
+        # OUTPUT CHECK
         # ==================================
 
         if not os.path.exists(
             output_file
         ):
 
-            jobs[job_id]["status"] = "error"
+            update_job(
 
-            jobs[job_id]["error"] = (
-                "Output video create nahi hui."
+                job_id,
+
+                status="error",
+
+                progress=0,
+
+                error=
+                    "Processed video create nahi hui."
             )
 
             return
 
 
-        jobs[job_id]["progress"] = 100
+        # ==================================
+        # COMPLETE
+        # ==================================
 
-        jobs[job_id]["status"] = "complete"
+        update_job(
+
+            job_id,
+
+            status="complete",
+
+            progress=100,
+
+            message=
+                "Video successfully process ho gayi."
+        )
 
 
     except Exception as e:
 
-        jobs[job_id]["status"] = "error"
+        print(
+            "JOB ERROR:",
+            str(e)
+        )
 
-        jobs[job_id]["error"] = str(e)
+        update_job(
+
+            job_id,
+
+            status="error",
+
+            progress=0,
+
+            error=str(e)
+        )
 
 
 # ==========================================
-# CREATE JOB
+# HOME
+# ==========================================
+
+@app.route("/")
+def home():
+
+    return render_template(
+        "index.html"
+    )
+
+
+# ==========================================
+# HEALTH
+# ==========================================
+
+@app.route("/health")
+def health():
+
+    return jsonify({
+
+        "status": "ok",
+
+        "service": "FixMyTube"
+    })
+
+
+# ==========================================
+# PROCESS
 # ==========================================
 
 @app.route(
@@ -462,7 +571,9 @@ def process_video():
     if "video" not in request.files:
 
         return jsonify({
-            "error": "Video file missing."
+
+            "error":
+                "Video file missing."
         }), 400
 
 
@@ -472,29 +583,39 @@ def process_video():
     if not video.filename:
 
         return jsonify({
-            "error": "Invalid video."
+
+            "error":
+                "Invalid video filename."
         }), 400
 
+
+    # ======================================
+    # JOB ID
+    # ======================================
 
     job_id = uuid.uuid4().hex
 
 
     input_file = os.path.join(
+
         UPLOAD_DIR,
-        job_id + "_input"
+
+        f"{job_id}_input"
     )
 
 
     output_file = os.path.join(
+
         OUTPUT_DIR,
-        job_id + "_output.mp4"
+
+        f"{job_id}_output.mp4"
     )
 
 
     try:
 
         # ==================================
-        # SAVE
+        # SAVE FILE
         # ==================================
 
         video.save(
@@ -507,23 +628,31 @@ def process_video():
         ):
 
             return jsonify({
-                "error": "Upload failed."
+
+                "error":
+                    "Upload failed."
             }), 400
 
 
-        file_size = os.path.getsize(
-            input_file
-        )
+        # ==================================
+        # SIZE CHECK
+        # ==================================
 
-
-        if file_size > MAX_FILE_SIZE:
+        if (
+            os.path.getsize(
+                input_file
+            )
+            > MAX_FILE_SIZE
+        ):
 
             os.remove(
                 input_file
             )
 
             return jsonify({
-                "error": "Video 2 GB se badi hai."
+
+                "error":
+                    "Video 2 GB se badi hai."
             }), 413
 
 
@@ -581,23 +710,53 @@ def process_video():
 
 
         pitch = safe_float(
+
             request.form.get(
                 "pitch"
             ),
+
             1.0,
+
             0.90,
+
             1.10
         )
 
 
         tempo = safe_float(
+
             request.form.get(
                 "tempo"
             ),
+
             1.0,
+
             0.90,
+
             1.10
         )
+
+
+        # ==================================
+        # CREATE JOB
+        # ==================================
+
+        with jobs_lock:
+
+            jobs[job_id] = {
+
+                "status":
+                    "queued",
+
+                "progress":
+                    5,
+
+                "message":
+                    "Video upload complete.",
+
+                "error":
+                    None
+            }
 
 
         settings = {
@@ -629,23 +788,6 @@ def process_video():
 
 
         # ==================================
-        # CREATE JOB
-        # ==================================
-
-        jobs[job_id] = {
-
-            "status":
-                "queued",
-
-            "progress":
-                0,
-
-            "error":
-                None
-        }
-
-
-        # ==================================
         # BACKGROUND THREAD
         # ==================================
 
@@ -654,17 +796,26 @@ def process_video():
             target=process_job,
 
             args=(
+
                 job_id,
+
                 input_file,
+
                 output_file,
+
                 settings
             ),
 
             daemon=True
         )
 
+
         thread.start()
 
+
+        # ==================================
+        # RETURN JOB ID
+        # ==================================
 
         return jsonify({
 
@@ -672,7 +823,10 @@ def process_video():
                 True,
 
             "job_id":
-                job_id
+                job_id,
+
+            "status":
+                "queued"
         })
 
 
@@ -682,18 +836,25 @@ def process_video():
             input_file
         ):
 
-            os.remove(
-                input_file
-            )
+            try:
+
+                os.remove(
+                    input_file
+                )
+
+            except OSError:
+                pass
 
 
         return jsonify({
-            "error": str(e)
+
+            "error":
+                str(e)
         }), 500
 
 
 # ==========================================
-# JOB STATUS
+# STATUS
 # ==========================================
 
 @app.route(
@@ -701,28 +862,46 @@ def process_video():
 )
 def job_status(job_id):
 
-    job = jobs.get(
-        job_id
-    )
+    with jobs_lock:
+
+        job = jobs.get(
+            job_id
+        )
 
 
     if not job:
 
         return jsonify({
-            "error": "Job not found."
+
+            "error":
+                "Job not found."
         }), 404
 
 
     return jsonify({
 
         "status":
-            job["status"],
+            job.get(
+                "status",
+                "unknown"
+            ),
 
         "progress":
-            job["progress"],
+            job.get(
+                "progress",
+                0
+            ),
+
+        "message":
+            job.get(
+                "message",
+                ""
+            ),
 
         "error":
-            job.get("error")
+            job.get(
+                "error"
+            )
     })
 
 
@@ -733,30 +912,40 @@ def job_status(job_id):
 @app.route(
     "/download/<job_id>"
 )
-def download(job_id):
+def download_file(job_id):
 
-    job = jobs.get(
-        job_id
-    )
+    with jobs_lock:
+
+        job = jobs.get(
+            job_id
+        )
 
 
     if not job:
 
         return jsonify({
-            "error": "Job not found."
+
+            "error":
+                "Job not found."
         }), 404
 
 
-    if job["status"] != "complete":
+    if job.get(
+        "status"
+    ) != "complete":
 
         return jsonify({
-            "error": "Video abhi ready nahi hai."
+
+            "error":
+                "Video abhi ready nahi hai."
         }), 400
 
 
     output_file = os.path.join(
+
         OUTPUT_DIR,
-        job_id + "_output.mp4"
+
+        f"{job_id}_output.mp4"
     )
 
 
@@ -765,7 +954,9 @@ def download(job_id):
     ):
 
         return jsonify({
-            "error": "Output file nahi mili."
+
+            "error":
+                "Output file nahi mili."
         }), 404
 
 
@@ -784,19 +975,118 @@ def download(job_id):
 
 
 # ==========================================
-# RUN
+# ERROR 413
+# ==========================================
+
+@app.errorhandler(413)
+def too_large(error):
+
+    return jsonify({
+
+        "error":
+            "Video 2 GB se badi hai."
+    }), 413
+
+
+# ==========================================
+# CLEANUP OLD JOBS
+# ==========================================
+
+def cleanup_old_files():
+
+    while True:
+
+        time.sleep(
+            3600
+        )
+
+        try:
+
+            now = time.time()
+
+
+            for folder in [
+                UPLOAD_DIR,
+                OUTPUT_DIR
+            ]:
+
+                for filename in os.listdir(
+                    folder
+                ):
+
+                    path = os.path.join(
+                        folder,
+                        filename
+                    )
+
+
+                    if not os.path.isfile(
+                        path
+                    ):
+                        continue
+
+
+                    try:
+
+                        age = (
+                            now -
+                            os.path.getmtime(
+                                path
+                            )
+                        )
+
+
+                        # 2 hours
+                        if age > 7200:
+
+                            os.remove(
+                                path
+                            )
+
+                    except OSError:
+                        pass
+
+
+        except Exception as e:
+
+            print(
+                "Cleanup error:",
+                e
+            )
+
+
+# ==========================================
+# START CLEANUP THREAD
+# ==========================================
+
+cleanup_thread = threading.Thread(
+
+    target=cleanup_old_files,
+
+    daemon=True
+)
+
+cleanup_thread.start()
+
+
+# ==========================================
+# START SERVER
 # ==========================================
 
 if __name__ == "__main__":
 
     port = int(
+
         os.environ.get(
             "PORT",
             "5000"
         )
     )
 
+
     app.run(
+
         host="0.0.0.0",
+
         port=port
     )
