@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: fixmytube
+    runtime: docker
+    plan: starter
+
+    healthCheckPath: /health
+
+    envVars:
+      - key: PORT
+        value: "10000"
