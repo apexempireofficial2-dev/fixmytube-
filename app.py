@@ -1,7 +1,7 @@
 import os
 import uuid
 import subprocess
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, render_template
 
 app = Flask(__name__)
 
@@ -83,7 +83,7 @@ def build_audio_filter(pitch, tempo):
 
 @app.route("/")
 def home():
-    return "FixMyTube Backend is running!"
+    return render_template("index.html")
 
 
 @app.route("/health")
